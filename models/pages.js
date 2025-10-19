@@ -1,5 +1,6 @@
 const { run, get, query } = require('./db');
 const CryptoJS = require('crypto-js');
+const bcrypt = require('bcrypt');
 
 /**
  * 生成随机密码（5位纯数字）
@@ -12,7 +13,6 @@ function generateRandomPassword() {
     const randomIndex = Math.floor(Math.random() * chars.length);
     password += chars[randomIndex];
   }
-  console.log('生成密码:', password); // 调试输出
   return password;
 }
 
@@ -32,18 +32,23 @@ async function createPage(htmlContent, isProtected = false, codeType = 'html') {
     const hash = CryptoJS.MD5(htmlContent + timestamp).toString();
     const urlId = hash.substring(0, 7);
     
-    // 无论是否启用保护，都生成密码
-    const password = generateRandomPassword();
-    console.log('生成密码:', password);
+    const needsProtection = Boolean(isProtected);
+    let plainPassword = null;
+    let storedPassword = null;
+
+    if (needsProtection) {
+      plainPassword = generateRandomPassword();
+      storedPassword = await bcrypt.hash(plainPassword, 10);
+    }
     
     // 保存到数据库
     // isProtected决定是否需要密码才能访问
     await run(
       'INSERT INTO pages (id, html_content, created_at, password, is_protected, code_type) VALUES (?, ?, ?, ?, ?, ?)',
-      [urlId, htmlContent, Date.now(), password, isProtected ? 1 : 0, codeType]
+      [urlId, htmlContent, Date.now(), storedPassword, needsProtection ? 1 : 0, codeType]
     );
     
-    return { urlId, password };
+    return { urlId, password: plainPassword, isProtected: needsProtection };
   } catch (error) {
     console.error('创建页面错误:', error);
     throw error;
@@ -81,8 +86,39 @@ async function getRecentPages(limit = 10) {
   }
 }
 
+/**
+ * 更新页面保护状态
+ * @param {string} id 页面ID
+ * @param {boolean} enable 是否启用保护
+ * @returns {Promise<{password: string|null, isProtected: boolean}>}
+ */
+async function setPageProtection(id, enable) {
+  const page = await getPageById(id);
+  if (!page) {
+    return null;
+  }
+
+  if (enable) {
+    const password = generateRandomPassword();
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await run(
+      'UPDATE pages SET is_protected = 1, password = ? WHERE id = ?',
+      [hashedPassword, id]
+    );
+    return { password, isProtected: true };
+  }
+
+  await run(
+    'UPDATE pages SET is_protected = 0, password = NULL WHERE id = ?',
+    [id]
+  );
+
+  return { password: null, isProtected: false };
+}
+
 module.exports = {
   createPage,
   getPageById,
-  getRecentPages
+  getRecentPages,
+  setPageProtection
 };

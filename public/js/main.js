@@ -52,7 +52,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const passwordToggle = document.getElementById('password-toggle');
   const passwordInfo = document.getElementById('password-info');
   const generatedPassword = document.getElementById('generated-password');
-  const copyPasswordOnly = document.getElementById('copy-password-button');
   const copyPasswordLink = document.getElementById('copy-password-link');
   
   // 创建代码编辑器
@@ -194,47 +193,43 @@ document.addEventListener('DOMContentLoaded', () => {
   // 密码开关事件监听
   if (passwordToggle) {
     passwordToggle.addEventListener('change', async () => {
-      // 如果没有生成链接，则不做任何操作
       if (!resultUrl || !resultUrl.dataset.originalUrl) {
         return;
       }
-      
-      if (passwordToggle.checked) {
-        // 显示密码区域和复制按钮
-        if (passwordInfo) passwordInfo.style.display = 'block';
-        if (copyPasswordLink) copyPasswordLink.style.display = 'inline-block';
-        
-        // 更新数据库状态为需要密码才能访问
-        try {
-          const urlId = resultUrl.dataset.originalUrl.split('/').pop();
-          await fetch(`/api/pages/${urlId}/protect`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ isProtected: true }),
-          });
-        } catch (error) {
-          console.error('更新保护状态错误:', error);
+
+      try {
+        const urlId = resultUrl.dataset.originalUrl.split('/').pop();
+        const response = await fetch(`/api/pages/${urlId}/protect`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ isProtected: passwordToggle.checked }),
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(data.error || '保护状态更新失败');
         }
-      } else {
-        // 隐藏密码区域和复制按钮
-        if (passwordInfo) passwordInfo.style.display = 'none';
-        if (copyPasswordLink) copyPasswordLink.style.display = 'none';
-        
-        // 更新数据库状态为不需要密码就能访问
-        try {
-          const urlId = resultUrl.dataset.originalUrl.split('/').pop();
-          await fetch(`/api/pages/${urlId}/protect`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ isProtected: false }),
-          });
-        } catch (error) {
-          console.error('更新保护状态错误:', error);
+
+        if (passwordToggle.checked) {
+          if (passwordInfo) passwordInfo.style.display = 'block';
+          if (copyPasswordLink) copyPasswordLink.style.display = 'inline-block';
+          if (generatedPassword) {
+            generatedPassword.textContent = data.password || '';
+          }
+        } else {
+          if (passwordInfo) passwordInfo.style.display = 'none';
+          if (copyPasswordLink) copyPasswordLink.style.display = 'none';
+          if (generatedPassword) {
+            generatedPassword.textContent = '';
+          }
         }
+      } catch (error) {
+        console.error('更新保护状态错误:', error);
+        showErrorToast('更新保护状态失败');
+        passwordToggle.checked = !passwordToggle.checked;
       }
     });
   }
@@ -572,14 +567,12 @@ document.addEventListener('DOMContentLoaded', () => {
             resultUrl.dataset.originalUrl = url;
           }
           
-          // 无论是否启用了密码保护，都保存密码
           if (generatedPassword) {
-            generatedPassword.textContent = data.password;
+            generatedPassword.textContent = data.password || '';
           }
-          console.log('生成的密码:', data.password); // 调试输出
           
           // 根据开关状态显示或隐藏密码区域
-          if (passwordToggle && passwordToggle.checked) {
+          if (passwordToggle && passwordToggle.checked && data.password) {
             if (passwordInfo) passwordInfo.style.display = 'block';
             if (copyPasswordLink) copyPasswordLink.style.display = 'inline-block';
           } else {
