@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const passwordInfo = document.getElementById('password-info');
   const generatedPassword = document.getElementById('generated-password');
   const copyPasswordLink = document.getElementById('copy-password-link');
+  const dropOverlay = document.getElementById('drop-overlay');
   
   // 创建代码编辑器
   let codeElement = null;
@@ -140,32 +141,84 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   // 文件上传处理
+  function readHtmlFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.html') && !file.name.toLowerCase().endsWith('.htm')) {
+      showErrorToast('请上传 HTML 文件');
+      return;
+    }
+
+    showLoading();
+    if (fileName) {
+      fileName.textContent = file.name;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target.result;
+      htmlInput.value = content;
+      htmlInput.selectionStart = htmlInput.selectionEnd = content.length;
+      syncToTextarea();
+      hideLoading();
+    };
+    reader.onerror = () => {
+      hideLoading();
+      showErrorToast('读取文件失败');
+    };
+    reader.readAsText(file);
+  }
+
   if (fileInput) {
     fileInput.addEventListener('change', (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      
-      if (!file.name.endsWith('.html') && !file.name.endsWith('.htm')) {
-        showErrorToast('请上传 HTML 文件');
+      readHtmlFile(event.target.files[0]);
+    });
+  }
+
+  if (codeInputContainer) {
+    ['dragenter', 'dragover'].forEach((eventName) => {
+      codeInputContainer.addEventListener(eventName, (event) => {
+        if (!event.dataTransfer || !event.dataTransfer.types.includes('Files')) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (dropOverlay) {
+          dropOverlay.classList.add('active');
+        }
+      });
+    });
+
+    ['dragleave', 'dragend'].forEach((eventName) => {
+      codeInputContainer.addEventListener(eventName, () => {
+        if (dropOverlay) {
+          dropOverlay.classList.remove('active');
+        }
+      });
+    });
+
+    codeInputContainer.addEventListener('drop', (event) => {
+      if (!event.dataTransfer) {
         return;
       }
-      
-      showLoading();
-      fileName.textContent = file.name;
-      
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const content = e.target.result;
-        htmlInput.value = content;
-        
-        // 将光标移动到文本末尾
-        htmlInput.selectionStart = htmlInput.selectionEnd = content.length;
-        
-        // 同步到高亮区域
-        syncToTextarea();
-        hideLoading();
-      };
-      reader.readAsText(file);
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (dropOverlay) {
+        dropOverlay.classList.remove('active');
+      }
+
+      const files = event.dataTransfer.files;
+      if (!files || !files.length) {
+        return;
+      }
+
+      const file = files[0];
+      if (fileInput) {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInput.files = dataTransfer.files;
+      }
+      readHtmlFile(file);
     });
   }
   
