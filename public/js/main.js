@@ -52,8 +52,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const passwordToggle = document.getElementById('password-toggle');
   const passwordInfo = document.getElementById('password-info');
   const generatedPassword = document.getElementById('generated-password');
-  const copyPasswordOnly = document.getElementById('copy-password-button');
   const copyPasswordLink = document.getElementById('copy-password-link');
+  const dropOverlay = document.getElementById('drop-overlay');
   
   // 创建代码编辑器
   let codeElement = null;
@@ -141,32 +141,84 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   // 文件上传处理
+  function readHtmlFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.html') && !file.name.toLowerCase().endsWith('.htm')) {
+      showErrorToast('请上传 HTML 文件');
+      return;
+    }
+
+    showLoading();
+    if (fileName) {
+      fileName.textContent = file.name;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target.result;
+      htmlInput.value = content;
+      htmlInput.selectionStart = htmlInput.selectionEnd = content.length;
+      syncToTextarea();
+      hideLoading();
+    };
+    reader.onerror = () => {
+      hideLoading();
+      showErrorToast('读取文件失败');
+    };
+    reader.readAsText(file);
+  }
+
   if (fileInput) {
     fileInput.addEventListener('change', (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      
-      if (!file.name.endsWith('.html') && !file.name.endsWith('.htm')) {
-        showErrorToast('请上传 HTML 文件');
+      readHtmlFile(event.target.files[0]);
+    });
+  }
+
+  if (codeInputContainer) {
+    ['dragenter', 'dragover'].forEach((eventName) => {
+      codeInputContainer.addEventListener(eventName, (event) => {
+        if (!event.dataTransfer || !event.dataTransfer.types.includes('Files')) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (dropOverlay) {
+          dropOverlay.classList.add('active');
+        }
+      });
+    });
+
+    ['dragleave', 'dragend'].forEach((eventName) => {
+      codeInputContainer.addEventListener(eventName, () => {
+        if (dropOverlay) {
+          dropOverlay.classList.remove('active');
+        }
+      });
+    });
+
+    codeInputContainer.addEventListener('drop', (event) => {
+      if (!event.dataTransfer) {
         return;
       }
-      
-      showLoading();
-      fileName.textContent = file.name;
-      
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const content = e.target.result;
-        htmlInput.value = content;
-        
-        // 将光标移动到文本末尾
-        htmlInput.selectionStart = htmlInput.selectionEnd = content.length;
-        
-        // 同步到高亮区域
-        syncToTextarea();
-        hideLoading();
-      };
-      reader.readAsText(file);
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (dropOverlay) {
+        dropOverlay.classList.remove('active');
+      }
+
+      const files = event.dataTransfer.files;
+      if (!files || !files.length) {
+        return;
+      }
+
+      const file = files[0];
+      if (fileInput) {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInput.files = dataTransfer.files;
+      }
+      readHtmlFile(file);
     });
   }
   
@@ -194,47 +246,43 @@ document.addEventListener('DOMContentLoaded', () => {
   // 密码开关事件监听
   if (passwordToggle) {
     passwordToggle.addEventListener('change', async () => {
-      // 如果没有生成链接，则不做任何操作
       if (!resultUrl || !resultUrl.dataset.originalUrl) {
         return;
       }
-      
-      if (passwordToggle.checked) {
-        // 显示密码区域和复制按钮
-        if (passwordInfo) passwordInfo.style.display = 'block';
-        if (copyPasswordLink) copyPasswordLink.style.display = 'inline-block';
-        
-        // 更新数据库状态为需要密码才能访问
-        try {
-          const urlId = resultUrl.dataset.originalUrl.split('/').pop();
-          await fetch(`/api/pages/${urlId}/protect`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ isProtected: true }),
-          });
-        } catch (error) {
-          console.error('更新保护状态错误:', error);
+
+      try {
+        const urlId = resultUrl.dataset.originalUrl.split('/').pop();
+        const response = await fetch(`/api/pages/${urlId}/protect`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ isProtected: passwordToggle.checked }),
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+          throw new Error(data.error || '保护状态更新失败');
         }
-      } else {
-        // 隐藏密码区域和复制按钮
-        if (passwordInfo) passwordInfo.style.display = 'none';
-        if (copyPasswordLink) copyPasswordLink.style.display = 'none';
-        
-        // 更新数据库状态为不需要密码就能访问
-        try {
-          const urlId = resultUrl.dataset.originalUrl.split('/').pop();
-          await fetch(`/api/pages/${urlId}/protect`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ isProtected: false }),
-          });
-        } catch (error) {
-          console.error('更新保护状态错误:', error);
+
+        if (passwordToggle.checked) {
+          if (passwordInfo) passwordInfo.style.display = 'block';
+          if (copyPasswordLink) copyPasswordLink.style.display = 'inline-block';
+          if (generatedPassword) {
+            generatedPassword.textContent = data.password || '';
+          }
+        } else {
+          if (passwordInfo) passwordInfo.style.display = 'none';
+          if (copyPasswordLink) copyPasswordLink.style.display = 'none';
+          if (generatedPassword) {
+            generatedPassword.textContent = '';
+          }
         }
+      } catch (error) {
+        console.error('更新保护状态错误:', error);
+        showErrorToast('更新保护状态失败');
+        passwordToggle.checked = !passwordToggle.checked;
       }
     });
   }
@@ -572,14 +620,12 @@ document.addEventListener('DOMContentLoaded', () => {
             resultUrl.dataset.originalUrl = url;
           }
           
-          // 无论是否启用了密码保护，都保存密码
           if (generatedPassword) {
-            generatedPassword.textContent = data.password;
+            generatedPassword.textContent = data.password || '';
           }
-          console.log('生成的密码:', data.password); // 调试输出
           
           // 根据开关状态显示或隐藏密码区域
-          if (passwordToggle && passwordToggle.checked) {
+          if (passwordToggle && passwordToggle.checked && data.password) {
             if (passwordInfo) passwordInfo.style.display = 'block';
             if (copyPasswordLink) copyPasswordLink.style.display = 'inline-block';
           } else {

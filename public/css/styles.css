@@ -648,6 +648,52 @@ body {
   z-index: 5;
 }
 
+.drop-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.75);
+  border: 2px dashed var(--primary);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: var(--primary-light);
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+  z-index: 1001;
+}
+
+.drop-overlay.active {
+  opacity: 1;
+}
+
+.drop-overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  font-size: 1.1rem;
+}
+
+.drop-overlay-content i {
+  font-size: 2.5rem;
+  color: var(--primary-light);
+}
+
+.drop-hint {
+  margin-top: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
 /* 隐藏底部固定文本 */
 .input-card::before {
   content: "";

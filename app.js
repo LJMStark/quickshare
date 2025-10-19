@@ -9,6 +9,10 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const FileStore = require('session-file-store')(session);
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const Joi = require('joi');
+const bcrypt = require('bcrypt');
 const fs = require('fs');
 const { initDatabase } = require('./models/db');
 
@@ -17,8 +21,7 @@ console.log('应用启动...');
 console.log('当前工作目录:', process.cwd());
 console.log('环境变量:', {
   NODE_ENV: process.env.NODE_ENV,
-  AUTH_ENABLED: process.env.AUTH_ENABLED,
-  AUTH_PASSWORD: process.env.AUTH_PASSWORD
+  AUTH_ENABLED: process.env.AUTH_ENABLED
 });
 
 // 导入认证中间件
@@ -26,6 +29,20 @@ const { isAuthenticated } = require('./middleware/auth');
 
 // 导入配置
 const config = require('./config');
+
+const authRateLimiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.max,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const passwordAttemptLimiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: Math.max(5, Math.floor(config.rateLimit.max / 2)),
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 // 路由导入
 const pagesRoutes = require('./routes/pages');
@@ -39,12 +56,13 @@ const PORT = process.env.NODE_ENV === 'production' ? 8888 : config.port;
 app.locals.config = config;
 
 // 中间件设置
-app.use(morgan(config.logLevel)); // 使用配置文件中的日志级别
-app.use(cors()); // 跨域支持
-app.use(bodyParser.json({ limit: '15mb' })); // JSON 解析，增加限制为15MB
-app.use(bodyParser.urlencoded({ extended: true, limit: '15mb' })); // 增加限制为15MB
-app.use(cookieParser()); // 解析 Cookie
-app.use(express.static(path.join(__dirname, 'public'))); // 静态文件
+app.use(morgan(config.logLevel));
+app.use(cors());
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(bodyParser.json({ limit: '15mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '15mb' }));
+app.use(cookieParser());
+app.use(express.static(path.join(__dirname, 'public')));
 
 // 创建会话目录
 const sessionDir = path.join(__dirname, 'sessions');
@@ -72,23 +90,29 @@ try {
 }
 
 // 使用文件存储会话
+const sessionSecret = config.sessionSecret;
+if (!sessionSecret) {
+  console.warn('警告: SESSION_SECRET 未配置，使用默认值可能存在安全风险');
+}
+
 app.use(session({
   store: new FileStore({
     path: sessionDir,
-    ttl: 86400, // 会话有效期（秒）
-    retries: 0, // 读取会话文件的重试次数
-    secret: 'html-go-secret-key', // 用于加密会话文件
+    ttl: config.sessionTtl,
+    retries: 0,
+    secret: sessionSecret || 'fallback-session-secret',
     logFn: function(message) {
-      console.log('[session-file-store]', message);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[session-file-store]', message);
+      }
     }
   }),
-  secret: 'html-go-secret-key',
+  secret: sessionSecret || 'fallback-session-secret',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    // 只在 HTTPS 环境下设置 secure为 true
-    secure: false, // 如果您使用 HTTPS，请设置为 true
-    maxAge: 24 * 60 * 60 * 1000, // 24小时
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: config.sessionTtl * 1000,
     httpOnly: true,
     sameSite: 'lax'
   }
@@ -111,49 +135,44 @@ app.get('/login', (req, res) => {
   });
 });
 
-app.post('/login', (req, res) => {
+app.post('/login', authRateLimiter, (req, res) => {
   const { password } = req.body;
 
-  console.log('登录尝试:');
-  console.log('- 密码:', password);
-  console.log('- 配置密码:', config.authPassword);
-  console.log('- 密码匹配:', password === config.authPassword);
-
-  // 如果认证功能未启用，直接重定向到首页
   if (!config.authEnabled) {
-    console.log('- 认证未启用，直接重定向到首页');
     return res.redirect('/');
   }
 
-  // 检查密码是否正确
+  if (!config.authPassword) {
+    return res.status(500).render('login', {
+      title: 'HTML-Go | 登录',
+      error: '管理员密码未配置'
+    });
+  }
+
+  if (!password) {
+    return res.render('login', {
+      title: 'HTML-Go | 登录',
+      error: '请输入密码'
+    });
+  }
+
   if (password === config.authPassword) {
-    console.log('- 密码正确，设置认证');
-
-    // 同时使用会话和 Cookie 来存储认证状态
-    // 1. 设置会话
     req.session.isAuthenticated = true;
-    console.log('- 设置会话认证标记');
 
-    // 2. 设置 Cookie
     res.cookie('auth', 'true', {
-      maxAge: 24 * 60 * 60 * 1000, // 24小时
+      maxAge: 24 * 60 * 60 * 1000,
       httpOnly: true,
-      secure: false, // 如果使用 HTTPS，设置为 true
+      secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
       sameSite: 'lax'
     });
-    console.log('- 设置认证 Cookie');
 
-    // 先尝试直接重定向，不等待会话保存
-    console.log('- 重定向到首页');
     return res.redirect('/');
-  } else {
-    console.log('- 密码不匹配，显示错误');
-    // 密码错误，显示错误信息
-    res.render('login', {
-      title: 'HTML-Go | 登录',
-      error: '密码错误，请重试'
-    });
   }
+
+  res.render('login', {
+    title: 'HTML-Go | 登录',
+    error: '密码错误，请重试'
+  });
 });
 
 // 退出登录路由
@@ -167,27 +186,30 @@ app.get('/logout', (req, res) => {
 // 将 API 路由分为两部分：需要认证的和不需要认证的
 
 // 导入路由处理函数
-const { createPage, getPageById, getRecentPages } = require('./models/pages');
+const { createPage, getPageById, getRecentPages, setPageProtection } = require('./models/pages');
 
 // 创建页面的 API 需要认证
 app.post('/api/pages/create', isAuthenticated, async (req, res) => {
   try {
-    const { htmlContent, isProtected } = req.body;
+    const schema = Joi.object({
+      htmlContent: Joi.string().max(50000).required(),
+      isProtected: Joi.boolean().default(false),
+      codeType: Joi.string().valid('html', 'markdown', 'svg', 'mermaid').optional()
+    });
 
-    if (!htmlContent) {
-      return res.status(400).json({
-        success: false,
-        error: '请提供HTML内容'
-      });
+    const { value, error } = schema.validate(req.body);
+
+    if (error) {
+      return res.status(400).json({ success: false, error: '请求参数不合法' });
     }
 
-    const result = await createPage(htmlContent, isProtected);
+    const result = await createPage(value.htmlContent, value.isProtected, value.codeType);
 
     res.json({
       success: true,
       urlId: result.urlId,
       password: result.password,
-      isProtected: !!result.password
+      isProtected: result.isProtected
     });
   } catch (error) {
     console.error('创建页面API错误:', error);
@@ -202,26 +224,30 @@ app.post('/api/pages/create', isAuthenticated, async (req, res) => {
 app.use('/api/pages', pagesRoutes);
 
 // 密码验证路由 - 用于AJAX验证
-app.get('/validate-password/:id', async (req, res) => {
+app.post('/validate-password/:id', passwordAttemptLimiter, async (req, res) => {
   try {
-    const { getPageById } = require('./models/pages');
     const { id } = req.params;
-    const { password } = req.query;
+    const schema = Joi.object({ password: Joi.string().length(5).pattern(/^[0-9]+$/).required() });
+    const { value, error } = schema.validate(req.body);
 
-    if (!password) {
+    if (error) {
       return res.json({ valid: false });
     }
 
     const page = await getPageById(id);
 
-    if (!page) {
+    if (!page || page.is_protected !== 1 || !page.password) {
       return res.json({ valid: false });
     }
 
-    // 检查密码是否正确
-    const isValid = page.is_protected === 1 && password === page.password;
+    const isValid = await bcrypt.compare(value.password, page.password);
 
-    return res.json({ valid: isValid });
+    if (isValid) {
+      req.session[`page_auth_${id}`] = true;
+      return res.json({ valid: true });
+    }
+
+    return res.json({ valid: false });
   } catch (error) {
     console.error('密码验证错误:', error);
     return res.status(500).json({ valid: false, error: '服务器错误' });
@@ -234,8 +260,8 @@ app.get('/', isAuthenticated, (req, res) => {
 });
 
 // 导入代码类型检测和内容渲染工具
-const { detectCodeType, CODE_TYPES } = require('./utils/codeDetector');
-const { renderContent, escapeHtml } = require('./utils/contentRenderer');
+const { detectCodeType } = require('./utils/codeDetector');
+const { renderContent } = require('./utils/contentRenderer');
 
 // 查看页面路由 - 无需登录即可访问
 app.get('/view/:id', async (req, res) => {
@@ -253,14 +279,11 @@ app.get('/view/:id', async (req, res) => {
 
     // 检查是否需要密码验证
     if (page.is_protected === 1) {
-      const { password } = req.query;
-
-      // 如果没有提供密码或密码不正确，显示密码输入页面
-      if (!password || password !== page.password) {
+      if (!req.session[`page_auth_${id}`]) {
         return res.render('password', {
           title: 'HTML-Go | 密码保护',
           id: id,
-          error: password ? '密码错误，请重试' : null
+          error: null
         });
       }
     }

@@ -28,8 +28,15 @@
             <i class="fas fa-code"></i>
             <span id="code-type-text">HTML</span>
           </div>
+          <div id="drop-overlay" class="drop-overlay" aria-hidden="true">
+            <div class="drop-overlay-content">
+              <i class="fas fa-file-import" aria-hidden="true"></i>
+              <p>释放以导入 HTML 文件</p>
+            </div>
+          </div>
           <textarea id="html-input" class="cyber-input" placeholder="在这里粘贴你的 HTML/Markdown/SVG/Mermaid 代码..." aria-label="HTML 代码输入区域"></textarea>
         </div>
+        <p id="drop-hint" class="drop-hint">或将 HTML 文件拖拽到此区域</p>
         
         <!-- 隐藏文件上传区域，但保留文件上传功能 -->
         <div style="display: none;">
